@@ -28,6 +28,7 @@
   }
   .mm-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.2); }
   .mm-btn:active { transform: translateY(0); }
+  .mm-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
   .panel {
     background: rgba(62,28,10,0.85); border: 2px solid rgba(139,90,43,0.4);
     border-radius: 20px; padding: 16px;
@@ -72,6 +73,48 @@ const MM_TABS = [
 const CANDY_COLORS = MM_TABS.map(t => ({ bg: t.grad, text: t.text }));
 const DEFAULT_DATA = [3,5,4,6,2,7,4,5,3,6,4,5,8,3,4,5,6,2,7,5,4,3,6,5,4,7,3,5,4];
 
+function matchColorHeader(header) {
+  const h = header.toLowerCase().trim();
+  for (const color of ["red","orange","yellow","green","blue","brown"]) {
+    if (h.includes(color)) return color;
+  }
+  return null;
+}
+
+function parsePastedTable(text) {
+  // Split into rows, detect tab or comma separation
+  const rows = text.trim().split(/\r?\n/).filter(r => r.trim());
+  if (rows.length < 2) return null;
+
+  const delim = rows[0].includes("\t") ? "\t" : ",";
+  const headers = rows[0].split(delim).map(h => h.trim());
+  const colorMap = {};
+  const colIndices = {};
+
+  headers.forEach((h, i) => {
+    const color = matchColorHeader(h);
+    if (color && !colIndices[color]) {
+      colIndices[color] = i;
+      colorMap[color] = [];
+    }
+  });
+
+  if (Object.keys(colIndices).length === 0) return null;
+
+  for (let r = 1; r < rows.length; r++) {
+    const cells = rows[r].split(delim);
+    Object.entries(colIndices).forEach(([color, idx]) => {
+      const val = Number(cells[idx]);
+      if (!isNaN(val) && val >= 0) colorMap[color].push(val);
+    });
+  }
+
+  // Filter out colors with no data
+  const result = {};
+  Object.entries(colorMap).forEach(([k, v]) => { if (v.length > 0) result[k] = v; });
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 function parseDataInput(text) {
   return text.split(/[\s,;\t\n\r]+/).map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n) && n >= 0);
 }
@@ -83,9 +126,7 @@ function generateBins(min, max, step) {
 }
 
 function MmCandy({ value, size, highlighted, colorIndex, theme }) {
-  const color = highlighted
-    ? { bg: theme.grad, text: theme.text }
-    : CANDY_COLORS[colorIndex % CANDY_COLORS.length];
+  const color = highlighted ? { bg: theme.grad, text: theme.text } : CANDY_COLORS[colorIndex % CANDY_COLORS.length];
   const dim = size || 32;
   return (
     <div style={{
@@ -108,53 +149,35 @@ function MmCandy({ value, size, highlighted, colorIndex, theme }) {
 function PopulationModal({ rawData, onClose, theme }) {
   const popMean = rawData.reduce((a, b) => a + b, 0) / rawData.length;
   const popSD = Math.sqrt(rawData.reduce((s, v) => s + (v - popMean) ** 2, 0) / rawData.length);
-  const min = Math.min(...rawData);
-  const max = Math.max(...rawData);
-  const freq = {};
-  rawData.forEach(v => { freq[v] = (freq[v] || 0) + 1; });
-  const allVals = [];
-  for (let v = min; v <= max; v++) allVals.push(v);
+  const min = Math.min(...rawData); const max = Math.max(...rawData);
+  const freq = {}; rawData.forEach(v => { freq[v] = (freq[v] || 0) + 1; });
+  const allVals = []; for (let v = min; v <= max; v++) allVals.push(v);
   const maxFreq = Math.max(...allVals.map(v => freq[v] || 0));
-
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" style={{ borderColor: theme.light + "55" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <h2 style={{ fontFamily: "'Fredoka', sans-serif", fontSize: 22, fontWeight: 700, color: theme.light, margin: 0 }}>
-            {theme.label} M&amp;M's — Population
-          </h2>
+          <h2 style={{ fontFamily: "'Fredoka', sans-serif", fontSize: 22, fontWeight: 700, color: theme.light, margin: 0 }}>{theme.label} M&amp;M's — Population</h2>
           <button className="mm-btn" style={{ padding: "6px 18px", fontSize: 12, background: theme.grad, color: theme.text }} onClick={onClose}>Close</button>
         </div>
-        <p style={{ fontSize: 13, color: "#d4a574", marginBottom: 16 }}>
-          The "population" is the entire class's {rawData.length} bags.
-        </p>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 180, marginBottom: 8, paddingBottom: 28, position: "relative" }}>
-          {allVals.map((v, vi) => {
+        <p style={{ fontSize: 13, color: "#d4a574", marginBottom: 16 }}>The "population" is the entire class's {rawData.length} bags.</p>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 180, marginBottom: 8, paddingBottom: 28 }}>
+          {allVals.map((v) => {
             const count = freq[v] || 0;
             return (
               <div key={v} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", height: "100%", justifyContent: "flex-end" }}>
-                <div style={{ fontSize: 12, color: "#f5e6d3", marginBottom: 3, fontWeight: 700, fontFamily: "'Fredoka', sans-serif" }}>{count > 0 ? count : ""}</div>
-                <div style={{
-                  width: "65%", height: maxFreq > 0 ? (count / maxFreq) * 130 + "px" : "0px",
-                  background: theme.barGrad, borderRadius: "12px 12px 4px 4px",
-                  boxShadow: count > 0 ? "0 3px 10px rgba(0,0,0,0.3), inset 0 2px 4px rgba(255,255,255,0.15)" : "none",
-                  minHeight: count > 0 ? 4 : 0,
-                }} />
-                <div style={{ fontSize: 14, color: theme.light, marginTop: 6, fontWeight: 700, fontFamily: "'Fredoka', sans-serif" }}>{v}</div>
+                <div style={{ fontSize: 12, color: "#f5e6d3", marginBottom: 3, fontWeight: 700, fontFamily: "'Fredoka'" }}>{count > 0 ? count : ""}</div>
+                <div style={{ width: "65%", height: maxFreq > 0 ? (count / maxFreq) * 130 + "px" : "0px", background: theme.barGrad, borderRadius: "12px 12px 4px 4px", boxShadow: count > 0 ? "0 3px 10px rgba(0,0,0,0.3), inset 0 2px 4px rgba(255,255,255,0.15)" : "none", minHeight: count > 0 ? 4 : 0 }} />
+                <div style={{ fontSize: 14, color: theme.light, marginTop: 6, fontWeight: 700, fontFamily: "'Fredoka'" }}>{v}</div>
               </div>
             );
           })}
         </div>
-        <div style={{ textAlign: "center", fontSize: 11, color: "#a0826d", letterSpacing: 1, marginBottom: 20, fontFamily: "'Fredoka', sans-serif" }}>{theme.label.toUpperCase()} M&amp;M's PER BAG</div>
+        <div style={{ textAlign: "center", fontSize: 11, color: "#a0826d", letterSpacing: 1, marginBottom: 20, fontFamily: "'Fredoka'" }}>{theme.label.toUpperCase()} M&amp;M's PER BAG</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, padding: "14px 0", borderTop: "2px solid rgba(139,90,43,0.3)" }}>
-          {[
-            { label: "N (bags)", value: rawData.length },
-            { label: "Pop. Mean (\u03BC)", value: popMean.toFixed(3) },
-            { label: "Pop. SD (\u03C3)", value: popSD.toFixed(3) },
-            { label: "Range", value: min + " \u2013 " + max },
-          ].map((stat, i) => (
+          {[{ label: "N (bags)", value: rawData.length }, { label: "Pop. Mean (\u03BC)", value: popMean.toFixed(3) }, { label: "Pop. SD (\u03C3)", value: popSD.toFixed(3) }, { label: "Range", value: min + " \u2013 " + max }].map((stat, i) => (
             <div key={i} style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 10, color: "#a0826d", letterSpacing: 0.5, marginBottom: 4, textTransform: "uppercase", fontFamily: "'Fredoka', sans-serif" }}>{stat.label}</div>
+              <div style={{ fontSize: 10, color: "#a0826d", letterSpacing: 0.5, marginBottom: 4, textTransform: "uppercase", fontFamily: "'Fredoka'" }}>{stat.label}</div>
               <div className="stat-value" style={{ fontSize: 18, color: theme.light }}>{stat.value}</div>
             </div>
           ))}
@@ -164,7 +187,132 @@ function PopulationModal({ rawData, onClose, theme }) {
   );
 }
 
-/* ─── Main simulation tab ─── */
+/* ─── Data Import Tab ─── */
+function DataTab({ onImport, tabStates }) {
+  const [pasteText, setPasteText] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [imported, setImported] = useState(false);
+
+  const handlePaste = (text) => {
+    setPasteText(text);
+    setImported(false);
+    const parsed = parsePastedTable(text);
+    setPreview(parsed);
+  };
+
+  const handleImport = () => {
+    if (preview) {
+      onImport(preview);
+      setImported(true);
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: 800, margin: "0 auto" }}>
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <div className="section-label" style={{ marginBottom: 12 }}>Paste Class Data</div>
+        <div style={{ fontFamily: "'Fredoka'", fontSize: 13, color: "#d4a574", marginBottom: 14, lineHeight: 1.7 }}>
+          <p><strong>How to use:</strong></p>
+          <p>1. Open your Google Sheet with the class M&amp;M data</p>
+          <p>2. Select all the data <strong>including the header row</strong> (the row with color names)</p>
+          <p>3. Copy it (Ctrl+C / Cmd+C)</p>
+          <p>4. Click in the box below and paste (Ctrl+V / Cmd+V)</p>
+          <p style={{ marginTop: 8, color: "#a0826d", fontSize: 11 }}>
+            The headers should contain color names (Red, Orange, Yellow, Green, Blue, Brown).
+            Other columns (like student names or totals) will be ignored automatically.
+          </p>
+        </div>
+        <textarea
+          value={pasteText}
+          onChange={e => handlePaste(e.target.value)}
+          onPaste={e => { setTimeout(() => handlePaste(e.target.value), 0); }}
+          style={{
+            width: "100%", height: 200, background: "rgba(0,0,0,0.3)",
+            border: "2px solid rgba(139,90,43,0.4)", borderRadius: 12,
+            color: "#f5e6d3", fontFamily: "'Nunito', monospace", fontSize: 13,
+            padding: 12, resize: "vertical", lineHeight: 1.5,
+          }}
+          placeholder={"Name\tRed\tOrange\tYellow\tGreen\tBlue\tBrown\nAlice\t4\t3\t2\t5\t6\t3\nBob\t6\t5\t3\t4\t5\t4\n..."}
+        />
+      </div>
+
+      {/* Preview */}
+      {preview && (
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="section-label" style={{ marginBottom: 12 }}>
+            Preview — {Object.keys(preview).length} color{Object.keys(preview).length !== 1 ? "s" : ""} detected
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
+            {MM_TABS.map(t => {
+              const data = preview[t.key];
+              if (!data) return (
+                <div key={t.key} style={{ padding: 10, borderRadius: 12, background: "rgba(0,0,0,0.2)", border: "1px solid rgba(139,90,43,0.2)", opacity: 0.4 }}>
+                  <div style={{ fontFamily: "'Fredoka'", fontSize: 12, color: "#7a5a3a", fontWeight: 700, marginBottom: 4 }}>{t.label}</div>
+                  <div style={{ fontSize: 11, color: "#7a5a3a" }}>No column found</div>
+                </div>
+              );
+              const mean = (data.reduce((a, b) => a + b, 0) / data.length).toFixed(2);
+              return (
+                <div key={t.key} style={{ padding: 10, borderRadius: 12, background: t.dark + "33", border: "1px solid " + t.light + "44" }}>
+                  <div style={{ fontFamily: "'Fredoka'", fontSize: 12, color: t.light, fontWeight: 700, marginBottom: 4 }}>{t.label}</div>
+                  <div style={{ fontSize: 11, color: "#d4a574" }}>{data.length} values</div>
+                  <div style={{ fontSize: 11, color: "#d4a574" }}>{"\u03BC"} = {mean}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 6 }}>
+                    {data.slice(0, 12).map((v, i) => (
+                      <span key={i} style={{
+                        display: "inline-block", background: t.grad,
+                        color: t.text, borderRadius: "50%", width: 22, height: 22,
+                        fontSize: 10, fontWeight: 700, fontFamily: "'Fredoka'",
+                        textAlign: "center", lineHeight: "22px",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.3), inset 0 1px 2px rgba(255,255,255,0.15)",
+                      }}>{v}</span>
+                    ))}
+                    {data.length > 12 && <span style={{ fontSize: 10, color: "#a0826d", lineHeight: "22px" }}>+{data.length - 12}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <button className="mm-btn" disabled={!preview} onClick={handleImport} style={{
+            width: "100%", marginTop: 14, padding: "12px 20px", fontSize: 15,
+            background: imported
+              ? "linear-gradient(180deg, #4CAF50 0%, #2E7D32 100%)"
+              : "linear-gradient(180deg, #FFD54F 0%, #F9A825 100%)",
+            color: imported ? "#fff" : "#5D4037",
+          }}>
+            {imported ? "\u2714 Data Loaded! Switch to a color tab to start sampling." : "Load Data Into Simulator"}
+          </button>
+        </div>
+      )}
+
+      {/* Current data status */}
+      <div className="panel">
+        <div className="section-label" style={{ marginBottom: 10 }}>Current Data Status</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8 }}>
+          {MM_TABS.map(t => {
+            const data = tabStates[t.key].rawData;
+            const isDefault = JSON.stringify(data) === JSON.stringify(DEFAULT_DATA);
+            return (
+              <div key={t.key} style={{ textAlign: "center", padding: 8, borderRadius: 10, background: t.dark + "22" }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: "50%", background: t.grad,
+                  margin: "0 auto 6px", boxShadow: "0 2px 4px rgba(0,0,0,0.3), inset 0 1px 3px rgba(255,255,255,0.15)",
+                }} />
+                <div style={{ fontFamily: "'Fredoka'", fontSize: 11, color: t.light, fontWeight: 700 }}>{t.label}</div>
+                <div style={{ fontSize: 10, color: isDefault ? "#7a5a3a" : "#4CAF50", fontFamily: "'Fredoka'", marginTop: 2 }}>
+                  {isDefault ? "Default" : data.length + " values"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Simulation Tab ─── */
 function ColorTab({ tabData, onUpdate, theme, sampleSize, binStep }) {
   const { rawData, sampleMeans, currentSample, editingData, dataInput } = tabData;
   const [isAnimating, setIsAnimating] = useState(false);
@@ -188,8 +336,8 @@ function ColorTab({ tabData, onUpdate, theme, sampleSize, binStep }) {
   }, [rawData, sampleSize]);
 
   const handleDraw = useCallback(() => {
-    const result = drawOneSample();
-    onUpdate({ currentSample: result, sampleMeans: [...meansRef.current, result.mean] });
+    const r = drawOneSample();
+    onUpdate({ currentSample: r, sampleMeans: [...meansRef.current, r.mean] });
     setIsAnimating(true); setTimeout(() => setIsAnimating(false), 400);
   }, [drawOneSample, onUpdate]);
 
@@ -200,10 +348,7 @@ function ColorTab({ tabData, onUpdate, theme, sampleSize, binStep }) {
     setIsAnimating(true); setTimeout(() => setIsAnimating(false), 400);
   }, [drawOneSample, onUpdate]);
 
-  const handleReset = () => {
-    onUpdate({ sampleMeans: [], currentSample: null });
-    setAutoRunning(false); autoRef.current = false;
-  };
+  const handleReset = () => { onUpdate({ sampleMeans: [], currentSample: null }); setAutoRunning(false); autoRef.current = false; };
 
   const toggleAutoRun = useCallback(() => {
     if (autoRunning) { setAutoRunning(false); autoRef.current = false; return; }
@@ -224,7 +369,6 @@ function ColorTab({ tabData, onUpdate, theme, sampleSize, binStep }) {
     if (vals.length > 0) onUpdate({ rawData: vals, sampleMeans: [], currentSample: null, editingData: false });
   };
 
-  // Computed values
   const popMean = rawData.reduce((a, b) => a + b, 0) / rawData.length;
   const popSD = Math.sqrt(rawData.reduce((s, v) => s + (v - popMean) ** 2, 0) / rawData.length);
   const bins = generateBins(Math.max(0, Math.floor(Math.min(...rawData)) - 0.5), Math.ceil(Math.max(...rawData)) + 0.5, binStep);
@@ -247,8 +391,6 @@ function ColorTab({ tabData, onUpdate, theme, sampleSize, binStep }) {
       {showPopulation && <PopulationModal rawData={rawData} onClose={() => setShowPopulation(false)} theme={theme} />}
       <div style={{ display: "grid", gridTemplateColumns: "270px 1fr", gap: 16 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-
-          {/* Class Data */}
           <div className="panel">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <span className="section-label">{theme.label} Data ({rawData.length} bags)</span>
@@ -262,13 +404,9 @@ function ColorTab({ tabData, onUpdate, theme, sampleSize, binStep }) {
               <div>
                 <textarea value={dataInput} onChange={e => onUpdate({ dataInput: e.target.value })}
                   style={{ width: "100%", height: 160, background: "rgba(0,0,0,0.3)", border: "2px solid rgba(139,90,43,0.4)", borderRadius: 12, color: "#f5e6d3", fontFamily: "'Nunito', sans-serif", fontSize: 13, padding: 10, resize: "vertical" }}
-                  placeholder={"Paste one value per line,\nor comma-separated,\nor from a spreadsheet column..."} />
-                <div style={{ fontSize: 11, color: "#a0826d", margin: "4px 0 6px" }}>
-                  Accepts any format: one per line, commas, tabs, or pasted from Excel.
-                </div>
-                <button className="mm-btn" style={{ width: "100%", fontSize: 12, ...btnStyle }} onClick={handleSaveData}>
-                  Save Data ({parseDataInput(dataInput).length} values found)
-                </button>
+                  placeholder={"Paste one value per line, comma-separated, or from a spreadsheet column..."} />
+                <div style={{ fontSize: 11, color: "#a0826d", margin: "4px 0 6px" }}>Accepts any format: one per line, commas, tabs, or pasted from Excel.</div>
+                <button className="mm-btn" style={{ width: "100%", fontSize: 12, ...btnStyle }} onClick={handleSaveData}>Save Data ({parseDataInput(dataInput).length} values found)</button>
               </div>
             ) : (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 5, justifyContent: "center" }}>
@@ -279,14 +417,12 @@ function ColorTab({ tabData, onUpdate, theme, sampleSize, binStep }) {
               </div>
             )}
             {!editingData && (
-              <div style={{ marginTop: 10, fontSize: 12, color: "#a0826d", textAlign: "center", fontFamily: "'Fredoka', sans-serif" }}>
+              <div style={{ marginTop: 10, fontSize: 12, color: "#a0826d", textAlign: "center", fontFamily: "'Fredoka'" }}>
                 {"\u03BC"} = <span style={{ color: theme.light, fontWeight: 700 }}>{popMean.toFixed(2)}</span>
                 {" \u00b7 "}{"\u03C3"} = <span style={{ color: theme.light, fontWeight: 700 }}>{popSD.toFixed(2)}</span>
               </div>
             )}
           </div>
-
-          {/* Current Sample */}
           <div className={"panel " + (isAnimating ? "flash" : "")}>
             <div className="section-label" style={{ marginBottom: 10 }}>Current Sample</div>
             {currentSample ? (
@@ -296,18 +432,12 @@ function ColorTab({ tabData, onUpdate, theme, sampleSize, binStep }) {
                     <MmCandy key={i} value={d.value} size={46} colorIndex={MM_TABS.findIndex(t => t.key === theme.key)} theme={theme} highlighted={true} />
                   ))}
                 </div>
-                <div style={{ textAlign: "center", fontSize: 16, color: theme.light, fontFamily: "'Fredoka', sans-serif", fontWeight: 700 }}>
-                  x&#772; = {currentSample.mean.toFixed(2)}
-                </div>
+                <div style={{ textAlign: "center", fontSize: 16, color: theme.light, fontFamily: "'Fredoka'", fontWeight: 700 }}>x&#772; = {currentSample.mean.toFixed(2)}</div>
               </div>
             ) : (
-              <div style={{ textAlign: "center", color: "#7a5a3a", fontSize: 13, padding: "14px 0", fontFamily: "'Fredoka', sans-serif" }}>
-                Click "Draw" to grab some M&amp;M's!
-              </div>
+              <div style={{ textAlign: "center", color: "#7a5a3a", fontSize: 13, padding: "14px 0", fontFamily: "'Fredoka'" }}>Click "Draw" to grab some M&amp;M's!</div>
             )}
           </div>
-
-          {/* Controls */}
           <div className="panel" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <button className="mm-btn" style={btnStyle} onClick={handleDraw}>Draw 1 Sample</button>
             <button className="mm-btn" style={btnStyle} onClick={() => handleDrawN(10)}>Draw 10 Samples</button>
@@ -316,45 +446,33 @@ function ColorTab({ tabData, onUpdate, theme, sampleSize, binStep }) {
             <button className="mm-btn" style={btnRed} onClick={handleReset}>Reset</button>
           </div>
         </div>
-
-        {/* Right: histogram + stats */}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div className="panel" style={{ flex: 1 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
               <span className="section-label">Sampling Distribution</span>
-              <span style={{ fontSize: 12, color: "#a0826d", fontFamily: "'Fredoka', sans-serif" }}>
-                {sampleMeans.length} sample{sampleMeans.length !== 1 ? "s" : ""} drawn
-              </span>
+              <span style={{ fontSize: 12, color: "#a0826d", fontFamily: "'Fredoka'" }}>{sampleMeans.length} sample{sampleMeans.length !== 1 ? "s" : ""} drawn</span>
             </div>
             <div style={{ position: "relative", height: 280, display: "flex", alignItems: "flex-end", gap: 1, paddingBottom: 28 }}>
-              <div style={{ position: "absolute", left: -6, top: "40%", transform: "rotate(-90deg)", fontSize: 10, color: "#a0826d", letterSpacing: 1, fontFamily: "'Fredoka', sans-serif" }}>FREQ</div>
+              <div style={{ position: "absolute", left: -6, top: "40%", transform: "rotate(-90deg)", fontSize: 10, color: "#a0826d", letterSpacing: 1, fontFamily: "'Fredoka'" }}>FREQ</div>
               {histogram.map((bin, i) => {
                 const barH = maxCount > 0 ? (bin.count / maxCount) * 220 : 0;
                 const showLabel = histogram.length <= 20 || i % Math.ceil(histogram.length / 20) === 0;
                 return (
                   <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", height: "100%", justifyContent: "flex-end", minWidth: 0 }}>
-                    <div style={{ fontSize: histogram.length > 30 ? 8 : 10, color: "#d4a574", marginBottom: 2, fontFamily: "'Fredoka', sans-serif", fontWeight: 600 }}>
-                      {bin.count > 0 && histogram.length <= 40 ? bin.count : ""}
-                    </div>
+                    <div style={{ fontSize: histogram.length > 30 ? 8 : 10, color: "#d4a574", marginBottom: 2, fontFamily: "'Fredoka'", fontWeight: 600 }}>{bin.count > 0 && histogram.length <= 40 ? bin.count : ""}</div>
                     <div className="bar-animate" style={{
-                      width: "90%", height: barH + "px",
-                      background: theme.barGrad,
+                      width: "90%", height: barH + "px", background: theme.barGrad,
                       borderRadius: histogram.length > 30 ? "3px 3px 1px 1px" : "10px 10px 3px 3px",
                       boxShadow: bin.count > 0 ? "0 2px 6px " + theme.dark + "44, inset 0 1px 3px rgba(255,255,255,0.15)" : "none",
                       minHeight: bin.count > 0 ? 2 : 0,
                     }} />
-                    {showLabel && (
-                      <div style={{ fontSize: histogram.length > 30 ? 7 : 9, color: "#a0826d", marginTop: 3, position: "absolute", bottom: 0, transform: "rotate(-45deg)", transformOrigin: "top center", whiteSpace: "nowrap", fontFamily: "'Fredoka', sans-serif" }}>{bin.label}</div>
-                    )}
+                    {showLabel && (<div style={{ fontSize: histogram.length > 30 ? 7 : 9, color: "#a0826d", marginTop: 3, position: "absolute", bottom: 0, transform: "rotate(-45deg)", transformOrigin: "top center", whiteSpace: "nowrap", fontFamily: "'Fredoka'" }}>{bin.label}</div>)}
                   </div>
                 );
               })}
             </div>
-            <div style={{ textAlign: "center", fontSize: 11, color: "#a0826d", marginTop: 8, letterSpacing: 1, fontFamily: "'Fredoka', sans-serif" }}>
-              SAMPLE MEAN ({theme.label.toUpperCase()} M&amp;M's)
-            </div>
+            <div style={{ textAlign: "center", fontSize: 11, color: "#a0826d", marginTop: 8, letterSpacing: 1, fontFamily: "'Fredoka'" }}>SAMPLE MEAN ({theme.label.toUpperCase()} M&amp;M's)</div>
           </div>
-
           <div className="panel">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
               {[
@@ -364,17 +482,13 @@ function ColorTab({ tabData, onUpdate, theme, sampleSize, binStep }) {
                 { label: "SE (\u03C3/\u221An)", value: theoreticalSE, color: "#EF5350" },
               ].map((stat, i) => (
                 <div key={i} style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 10, color: "#a0826d", letterSpacing: 0.5, marginBottom: 4, textTransform: "uppercase", fontFamily: "'Fredoka', sans-serif" }}>{stat.label}</div>
+                  <div style={{ fontSize: 10, color: "#a0826d", letterSpacing: 0.5, marginBottom: 4, textTransform: "uppercase", fontFamily: "'Fredoka'" }}>{stat.label}</div>
                   <div className="stat-value" style={{ fontSize: 20, color: stat.color }}>{stat.value}</div>
                 </div>
               ))}
             </div>
             {sampleMeans.length >= 30 && (
-              <div style={{
-                marginTop: 12, padding: "10px 14px",
-                background: theme.dark + "18", border: "2px solid " + theme.dark + "33",
-                borderRadius: 14, fontSize: 13, color: "#d4a574", fontFamily: "'Fredoka', sans-serif",
-              }}>
+              <div style={{ marginTop: 12, padding: "10px 14px", background: theme.dark + "18", border: "2px solid " + theme.dark + "33", borderRadius: 14, fontSize: 13, color: "#d4a574", fontFamily: "'Fredoka'" }}>
                 The sampling distribution is becoming bell-shaped, and the observed SE approaches &sigma;/&radic;n = {theoreticalSE}. That's the Central Limit Theorem!
               </div>
             )}
@@ -387,13 +501,13 @@ function ColorTab({ tabData, onUpdate, theme, sampleSize, binStep }) {
 
 /* ─── App ─── */
 function App() {
-  const [activeTab, setActiveTab] = useState("green");
+  const [activeTab, setActiveTab] = useState("data");
   const [sampleSize, setSampleSize] = useState(5);
   const [binStep, setBinStep] = useState(0.25);
 
-  const makeDefault = () => ({
-    rawData: [...DEFAULT_DATA], sampleMeans: [], currentSample: null,
-    editingData: false, dataInput: DEFAULT_DATA.join("\n"),
+  const makeDefault = (data) => ({
+    rawData: data || [...DEFAULT_DATA], sampleMeans: [], currentSample: null,
+    editingData: false, dataInput: (data || DEFAULT_DATA).join("\n"),
   });
 
   const [tabStates, setTabStates] = useState(() => {
@@ -415,43 +529,66 @@ function App() {
     });
   };
 
+  const handleSheetImport = (colorData) => {
+    setTabStates(prev => {
+      const next = { ...prev };
+      Object.entries(colorData).forEach(([colorKey, values]) => {
+        next[colorKey] = { rawData: values, sampleMeans: [], currentSample: null, editingData: false, dataInput: values.join("\n") };
+      });
+      return next;
+    });
+  };
+
   const theme = MM_TABS.find(t => t.key === activeTab);
+  const isDataTab = activeTab === "data";
 
   return (
     <div style={{ padding: 20, maxWidth: 1100, margin: "0 auto" }}>
-      {/* Header */}
       <div style={{ textAlign: "center", marginBottom: 20 }}>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
           {MM_TABS.map(t => (
-            <div key={t.key} style={{
-              width: 18, height: 18, borderRadius: "50%", background: t.grad,
-              boxShadow: "0 2px 4px rgba(0,0,0,0.35), inset 0 -2px 4px rgba(0,0,0,0.2), inset 0 2px 4px rgba(255,255,255,0.2)",
-            }} />
+            <div key={t.key} style={{ width: 18, height: 18, borderRadius: "50%", background: t.grad,
+              boxShadow: "0 2px 4px rgba(0,0,0,0.35), inset 0 -2px 4px rgba(0,0,0,0.2), inset 0 2px 4px rgba(255,255,255,0.2)" }} />
           ))}
         </div>
-        <h1 style={{
-          fontFamily: "'Fredoka', sans-serif", fontSize: 28, fontWeight: 700, color: "#FFD54F",
-          margin: 0, letterSpacing: "0.5px",
-          textShadow: "0 2px 8px rgba(0,0,0,0.4), 0 0 30px rgba(255,213,79,0.15)",
-        }}>M&amp;M's Sampling Distribution</h1>
-        <p style={{ color: "#a0826d", fontSize: 13, margin: "6px 0 0", fontFamily: "'Fredoka', sans-serif" }}>
-          Draw random samples of n={sampleSize} with replacement &middot; One tab per color
+        <h1 style={{ fontFamily: "'Fredoka'", fontSize: 28, fontWeight: 700, color: "#FFD54F", margin: 0,
+          textShadow: "0 2px 8px rgba(0,0,0,0.4), 0 0 30px rgba(255,213,79,0.15)" }}>
+          M&amp;M's Sampling Distribution
+        </h1>
+        <p style={{ color: "#a0826d", fontSize: 13, margin: "6px 0 0", fontFamily: "'Fredoka'" }}>
+          {isDataTab ? "Paste your class data below to get started" : "Draw random samples of n=" + sampleSize + " with replacement"}
         </p>
       </div>
 
-      {/* Tab bar + controls */}
+      {/* Tab bar */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        {/* Data tab */}
+        <button onClick={() => setActiveTab("data")} style={{
+          padding: "8px 18px", borderRadius: 50, border: "none", cursor: "pointer",
+          fontFamily: "'Fredoka'", fontSize: 14, fontWeight: 700,
+          background: isDataTab ? "linear-gradient(180deg, #FFD54F 0%, #F9A825 100%)" : "rgba(62,28,10,0.7)",
+          color: isDataTab ? "#5D4037" : "#8a6a50",
+          boxShadow: isDataTab ? "0 4px 12px rgba(249,168,37,0.4), inset 0 1px 0 rgba(255,255,255,0.2)" : "0 2px 6px rgba(0,0,0,0.2)",
+          transform: isDataTab ? "scale(1.05)" : "scale(1)", transition: "all 0.2s",
+        }}>
+          {"\uD83D\uDCCB"} Data
+        </button>
+
+        <div style={{ width: 1, height: 24, background: "rgba(139,90,43,0.3)", margin: "0 4px" }} />
+
         {MM_TABS.map(t => {
           const isActive = activeTab === t.key;
           const count = tabStates[t.key].sampleMeans.length;
+          const isDefault = JSON.stringify(tabStates[t.key].rawData) === JSON.stringify(DEFAULT_DATA);
           return (
             <button key={t.key} onClick={() => setActiveTab(t.key)} style={{
               padding: "8px 18px", borderRadius: 50, border: "none", cursor: "pointer",
-              fontFamily: "'Fredoka', sans-serif", fontSize: 14, fontWeight: 700,
+              fontFamily: "'Fredoka'", fontSize: 14, fontWeight: 700,
               background: isActive ? t.barGrad : "rgba(62,28,10,0.7)",
               color: isActive ? t.text : "#8a6a50",
               boxShadow: isActive ? "0 4px 12px " + t.dark + "66, inset 0 1px 0 rgba(255,255,255,0.2)" : "0 2px 6px rgba(0,0,0,0.2)",
               transform: isActive ? "scale(1.05)" : "scale(1)", transition: "all 0.2s", position: "relative",
+              opacity: isDefault ? 0.6 : 1,
             }}>
               {t.label}
               {count > 0 && (
@@ -467,30 +604,37 @@ function App() {
           );
         })}
 
-        <div style={{ marginLeft: 12, display: "flex", alignItems: "center", gap: 6 }}>
-          <label style={{ fontSize: 12, color: "#a0826d", fontFamily: "'Fredoka', sans-serif" }}>n =</label>
-          <select className="ctrl-select" value={sampleSize} onChange={e => handleSampleSizeChange(Number(e.target.value))}>
-            {[2,3,5,10,15,20,30,50,100].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </div>
-
-        <div style={{ marginLeft: 8, display: "flex", alignItems: "center", gap: 6 }}>
-          <label style={{ fontSize: 12, color: "#a0826d", fontFamily: "'Fredoka', sans-serif" }}>Bin =</label>
-          <select className="ctrl-select" value={binStep} onChange={e => setBinStep(Number(e.target.value))}>
-            {[0.1, 0.2, 0.25, 0.5, 1.0].map(w => <option key={w} value={w}>{w}</option>)}
-          </select>
-        </div>
+        {!isDataTab && (
+          <>
+            <div style={{ marginLeft: 12, display: "flex", alignItems: "center", gap: 6 }}>
+              <label style={{ fontSize: 12, color: "#a0826d", fontFamily: "'Fredoka'" }}>n =</label>
+              <select className="ctrl-select" value={sampleSize} onChange={e => handleSampleSizeChange(Number(e.target.value))}>
+                {[2,3,5,10,15,20,30,50,100].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+            <div style={{ marginLeft: 8, display: "flex", alignItems: "center", gap: 6 }}>
+              <label style={{ fontSize: 12, color: "#a0826d", fontFamily: "'Fredoka'" }}>Bin =</label>
+              <select className="ctrl-select" value={binStep} onChange={e => setBinStep(Number(e.target.value))}>
+                {[0.1, 0.2, 0.25, 0.5, 1.0].map(w => <option key={w} value={w}>{w}</option>)}
+              </select>
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Active tab */}
-      <ColorTab
-        key={activeTab}
-        tabData={tabStates[activeTab]}
-        onUpdate={(partial) => handleTabUpdate(activeTab, partial)}
-        theme={theme}
-        sampleSize={sampleSize}
-        binStep={binStep}
-      />
+      {/* Content */}
+      {isDataTab ? (
+        <DataTab onImport={handleSheetImport} tabStates={tabStates} />
+      ) : (
+        <ColorTab
+          key={activeTab}
+          tabData={tabStates[activeTab]}
+          onUpdate={(partial) => handleTabUpdate(activeTab, partial)}
+          theme={theme}
+          sampleSize={sampleSize}
+          binStep={binStep}
+        />
+      )}
     </div>
   );
 }
